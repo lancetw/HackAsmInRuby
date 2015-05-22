@@ -1,103 +1,112 @@
-require_relative('primitive')
-require_relative('lookupTable')
+require_relative('primitive_type')
+require_relative('lookup_table')
 
+# HackAsm to BinaryString Hack file Assembler
 class HackAssembler
-
   def initialize
-    @foo = Array.new
-    @bar = Array.new
-    @baz = Hash.new
+    @foo = []
+    @bar = []
+    @baz = {}
   end
 
   def read(line)
     @foo << line
   end
 
-  def parse
-    @bar = Marshal.load(Marshal.dump(@foo)) # deep clone
-    pre_clean; parse_symbols
-    prepare_addrs
-    run_A_instruct
-    run_C_instruct
-
-    return self.out
+  def to_s
+    "#{@bar}"
   end
 
-  def run_A_instruct
+  def parse
+    @bar = Marshal.load(Marshal.dump(@foo)) # deep clone
+    pre_clean
+    parse_symbols
+    prepare_addrs
+    trans_a_instruct
+    trans_c_instruct
+    @bar
+  end
+
+  def trans_a_instruct
     @bar.map! do |line|
-      if line[0] == '@' then line[0] = ''
-        if line[0] == 'R' then line[0] = '' end
-        line = (TABLE_P.include? line) ? TABLE_P[line] : line.to_i
-      else line = line end
+      line =
+        if line[0] == '@'
+          line.slice!(0)
+          line[0] == 'R' && line.slice!(0)
+          (TABLE_P.include? line) ? TABLE_P[line] : line.to_i
+        else
+          line
+        end
     end
   end
 
-  def run_C_instruct
+  def trans_c_instruct
     @bar.map! do |line|
-      if not line.is_a? Numeric
-        tmp, jmp = line.split(';')
-        jmp = TABLE_J[jmp]
-        line = jmp
-
-        if tmp.include?('=') then dest, comp = tmp.split('=')
-        else comp = tmp end
-
-        dest = TABLE_D[dest]
-        line = line + (dest << 3) unless dest.nil?
-
-        if TABLE_C_A0.include? comp then comp = TABLE_C_A0[comp]
-        else comp = TABLE_C_A1[comp]; line = line + 0x1000 end
-        line = (comp.nil?) ? line : (line + (comp << 6))
-        line = line + 0xE000
+      unless line.is_a? Numeric
+        s, jmp = line.split(/\;/)
+        line = TABLE_J[jmp]
+        s.include?('=') ? (dst, cmp = s.split(/\=/)) : (cmp = s)
+        dst = TABLE_D[dst]
+        line += (dst << 3) unless dst.nil?
+        (TABLE_C_A0.include? cmp) ? (cmp = TABLE_C_A0[cmp]) : (cmp = TABLE_C_A1[cmp]; line += 0x1000)
+        line = ((cmp.nil?) ? line : (line + (cmp << 6))) + 0xE000
       end
       line = line.to_bin(16)
     end
   end
 
   def parse_symbols
-    tmp = Hash.new
+    h = {}
     i = 0
     @bar.each do |line|
-      key = line.scan(/\(([^"]*)\)/).join()
-      if key.empty? then i = i + 1; next end
-      val = i; tmp[key] = i
+      key = line.scan(/\(([^"]*)\)/).join
+      if key.empty?
+        i += 1
+        next
+      end
+      h[key] = i
     end
-    @baz = tmp; tmp = Array.new
+    @baz = h
+
+    a = []
     @bar.each do |line|
-      key = line.scan(/\(([^"]*)\)/).join()
-      if key.empty? then tmp << line end
+      key = line.scan(/\(([^"]*)\)/).join
+      a << line if key.empty?
     end
-    @bar = tmp
+    @bar = a
   end
 
   def prepare_addrs
     addr = 0x10
     @bar.map! do |line|
-      key = line.scan(/\@([^"]*)/).join()
-      tmp = (not key.empty?) ? @baz[key] : line
-      if tmp.nil?
-        if key[0] != 'R' and not key.numeric? and not TABLE_P.has_key? key
-          TABLE_P[key] = addr; addr = addr + 1
+      key = line.scan(/\@([^"]*)/).join
+      s = (!key.empty?) ? @baz[key] : line
+      line =
+        if s.nil?
+          unless (TABLE_P.key? key) || key.numeric? || key[0] == 'R'
+            TABLE_P[key] = addr
+            addr += 1
+          end
+          line
+        else
+          s
         end
-        line = line
-      else
-        line = tmp
-      end
     end
   end
 
   def pre_clean
-    tmp = Array.new
+    a = []
     @bar.each do |line|
-      line.sub!(/\/\/.*/, ''); line.strip!
-      tmp << line unless line.empty?
+      line.sub!(%r{//.*}, '')
+      line.strip!
+      a << line unless line.empty?
     end
-    @bar = tmp
+    @bar = a
   end
 
-  def out
-    return @bar
-  end
-
-  private :parse_symbols, :prepare_addrs, :run_A_instruct, :run_C_instruct
+  private :pre_clean,
+          :parse_symbols,
+          :prepare_addrs,
+          :trans_a_instruct,
+          :trans_c_instruct
 end
